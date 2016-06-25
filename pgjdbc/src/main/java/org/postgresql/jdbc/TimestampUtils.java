@@ -16,6 +16,7 @@ import org.postgresql.util.GT;
 import org.postgresql.util.PSQLException;
 import org.postgresql.util.PSQLState;
 
+import java.lang.reflect.Field;
 import java.sql.Date;
 import java.sql.SQLException;
 import java.sql.Time;
@@ -47,6 +48,7 @@ public class TimestampUtils {
   private static final char[] ZEROS = {'0', '0', '0', '0', '0', '0', '0', '0', '0'};
   private static final char[][] NUMBERS;
   private static final HashMap<String, TimeZone> GMT_ZONES = new HashMap<String, TimeZone>();
+  private static final Field DEFAULT_TIME_ZONE_FIELD;
 
   static {
     // The expected maximum value is 60 (seconds), so 64 is used "just in case"
@@ -75,6 +77,18 @@ public class TimestampUtils {
       GMT_ZONES.put(pgZoneName + Math.abs(i), timeZone);
       GMT_ZONES.put(pgZoneName + NUMBERS[Math.abs(i)], timeZone);
     }
+    // Fast path to getting the default timezone.
+    // Accessing the default timezone over and over creates a clone with regular API.
+    // Because we don't mutate that object in our use of it, we can access the field directly.
+    // This saves the creation of a clone everytime, and the memory associated to all these clones.
+    Field tzField;
+    try {
+      tzField = TimeZone.class.getDeclaredField("defaultTimeZone");
+      tzField.setAccessible(true);
+    } catch (Exception e) {
+      tzField = null;
+    }
+    DEFAULT_TIME_ZONE_FIELD = tzField;
   }
 
   private final StringBuilder sbuf = new StringBuilder();
@@ -795,6 +809,17 @@ public class TimestampUtils {
   }
 
   private static TimeZone getDefaultTz() {
+    // Fast path to getting the default timezone.
+    if (DEFAULT_TIME_ZONE_FIELD != null) {
+      try {
+        TimeZone defaultTimeZone = (TimeZone) DEFAULT_TIME_ZONE_FIELD.get(null);
+        if (defaultTimeZone != null) {
+          return defaultTimeZone;
+        }
+      } catch (Exception e) {
+        // If this were to fail, fallback on slow method.
+      }
+    }
     return TimeZone.getDefault();
   }
 
